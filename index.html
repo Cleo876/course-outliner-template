@@ -205,7 +205,7 @@
         <div class="flex items-center space-x-4">
             <span id="save-status" class="text-sm text-gray-500 font-medium italic"><i class="fas fa-check-circle text-green-500"></i> Saved</span>
             <button onclick="exportPDF()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow flex items-center gap-2 font-medium transition-colors">
-                <i class="fas fa-file-pdf"></i> Export
+                <i class="fas fa-file-pdf"></i> Export PDF
             </button>
         </div>
     </div>
@@ -222,10 +222,15 @@
         </div>
         
         <!-- Sidebar Actions -->
-        <div class="p-4 border-b border-gray-200">
-            <button onclick="createNewDocument()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 px-4 rounded shadow flex items-center justify-center gap-2 transition-colors">
+        <div class="p-4 border-b border-gray-200 flex flex-col gap-2">
+            <button onclick="createNewDocument()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded shadow flex items-center justify-center gap-2 transition-colors">
                 <i class="fas fa-plus"></i> Create New Outline
             </button>
+            <button onclick="document.getElementById('import-file').click()" class="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded shadow flex items-center justify-center gap-2 transition-colors">
+                <i class="fas fa-file-import"></i> Import Outline
+            </button>
+            <!-- Hidden file input for importing -->
+            <input type="file" id="import-file" accept=".crr" class="hidden" onchange="importDocument(event)">
         </div>
 
         <!-- Sidebar List -->
@@ -649,6 +654,71 @@
             };
         }
 
+        function importDocument(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const importedData = JSON.parse(e.target.result);
+                    
+                    // Basic validation to ensure it's a valid outline structure
+                    if (!importedData || typeof importedData.content !== 'string') {
+                        throw new Error("Invalid file format");
+                    }
+
+                    // Always generate a new ID so we don't accidentally overwrite existing outlines
+                    const id = Date.now().toString(); 
+                    const name = importedData.name ? importedData.name + " (Imported)" : "Imported Outline";
+                    
+                    const tx = db.transaction("outlines", "readwrite");
+                    tx.objectStore("outlines").put({
+                        id: id,
+                        name: name,
+                        content: importedData.content,
+                        updatedAt: Date.now()
+                    });
+                    
+                    tx.oncomplete = () => {
+                        currentDocId = id;
+                        localStorage.setItem('activeOutlineId', id);
+                        document.getElementById('doc-name-input').value = name;
+                        document.getElementById('document-canvas').innerHTML = importedData.content;
+                        
+                        captureState(true);
+                        updateSidebarList();
+                        setSaveStatus('Imported');
+                        showModal('Outline imported successfully!', null, true);
+                    };
+
+                } catch (err) {
+                    showModal('Error importing file. Please make sure it is a valid .crr outline file.', null, true);
+                }
+                
+                // Reset file input so the same file can be imported again if needed
+                event.target.value = '';
+            };
+            reader.readAsText(file);
+        }
+
+        function exportDocumentData(id) {
+            const tx = db.transaction("outlines", "readonly");
+            const req = tx.objectStore("outlines").get(id);
+            req.onsuccess = () => {
+                if (req.result) {
+                    const dataStr = JSON.stringify(req.result);
+                    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+                    const exportFileDefaultName = (req.result.name || "outline").replace(/[^a-zA-Z0-9_\-]/g, '_') + '.crr';
+
+                    const linkElement = document.createElement('a');
+                    linkElement.setAttribute('href', dataUri);
+                    linkElement.setAttribute('download', exportFileDefaultName);
+                    linkElement.click();
+                }
+            };
+        }
+
         function updateSidebarList() {
             if (!db) return;
             const tx = db.transaction("outlines", "readonly");
@@ -677,6 +747,18 @@
                         }
                     };
 
+                    const actionDiv = document.createElement('div');
+                    actionDiv.className = "flex gap-1";
+
+                    const exportBtn = document.createElement('button');
+                    exportBtn.className = "text-gray-400 hover:text-green-600 hover:bg-green-50 w-8 h-8 rounded flex justify-center items-center transition-colors";
+                    exportBtn.innerHTML = '<i class="fas fa-file-export"></i>';
+                    exportBtn.title = "Export Data (for sharing)";
+                    exportBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        exportDocumentData(doc.id);
+                    };
+
                     const deleteBtn = document.createElement('button');
                     deleteBtn.className = "text-gray-400 hover:text-red-500 hover:bg-red-50 w-8 h-8 rounded flex justify-center items-center transition-colors";
                     deleteBtn.innerHTML = '<i class="fas fa-trash-alt"></i>';
@@ -686,8 +768,11 @@
                         deleteDocument(doc.id);
                     };
                     
+                    actionDiv.appendChild(exportBtn);
+                    actionDiv.appendChild(deleteBtn);
+
                     div.appendChild(textDiv);
-                    div.appendChild(deleteBtn);
+                    div.appendChild(actionDiv);
                     listEl.appendChild(div);
                 });
             };
@@ -724,7 +809,7 @@
             const statusEl = document.getElementById('save-status');
             if (isError) {
                 statusEl.innerHTML = `<i class="fas fa-exclamation-triangle text-red-500"></i> ${text}`;
-            } else if (text === 'Saved' || text === 'Created New') {
+            } else if (text === 'Saved' || text === 'Created New' || text === 'Imported') {
                 statusEl.innerHTML = `<i class="fas fa-check-circle text-green-500"></i> ${text}`;
             } else {
                 statusEl.innerHTML = `<i class="fas fa-spinner fa-spin text-blue-500"></i> ${text}`;
