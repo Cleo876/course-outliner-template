@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Course Outline Template Builder</title>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Font Awesome for Toolbar Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- html2pdf for PDF Generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <style>
+        /* Academic Font Settings */
+        body {
+            font-family: 'Times New Roman', Times, serif;
+            background-color: #f3f4f6;
+            color: #000;
+        }
+
+        /* A4 Paper Styling */
+        .page-container {
+            width: 210mm;
+            min-height: 297mm;
+            margin: 80px auto 40px auto; /* 80px top margin to account for fixed toolbar */
+            padding: 20mm 15mm;
+            background: white;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+            line-height: 1.5;
+            position: relative;
+        }
+
+        /* Editable Areas - Hover & Focus states */
+        [contenteditable="true"] {
+            outline: none;
+            transition: all 0.2s ease;
+            min-height: 1.2em;
+            padding: 2px 4px;
+            border-radius: 2px;
+        }
+        
+        .no-print [contenteditable="true"]:hover {
+            background-color: #f8fafc;
+            box-shadow: inset 0 0 0 1px #cbd5e1;
+            cursor: text;
+        }
+
+        .no-print [contenteditable="true"]:focus {
+            background-color: #ffffff;
+            box-shadow: inset 0 0 0 2px #3b82f6;
+        }
+
+        /* Ghost Text / Placeholders */
+        [contenteditable="true"]:empty::before {
+            content: attr(data-placeholder);
+            color: #9ca3af;
+            pointer-events: none;
+            display: inline-block;
+            font-style: italic;
+        }
+
+        /* Table Styling matching the PDF */
+        .outline-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
+
+        .outline-table th, .outline-table td {
+            border: 1px solid #000;
+            padding: 6px 8px;
+            vertical-align: top;
+        }
+
+        .outline-table th {
+            text-align: left;
+            font-weight: bold;
+            background-color: #f9fafb;
+        }
+
+        .outline-table .label-cell {
+            font-weight: bold;
+            text-transform: uppercase;
+            width: 20%;
+            font-size: 0.85rem;
+        }
+
+        /* Interactive Checkboxes */
+        .check-toggle {
+            cursor: pointer;
+            font-size: 1.1em;
+            margin-right: 4px;
+            user-select: none;
+            color: #000;
+        }
+        
+        .no-print .check-toggle:hover {
+            color: #3b82f6;
+        }
+
+        /* Section Headings */
+        .section-header {
+            font-weight: bold;
+            text-transform: uppercase;
+            margin-top: 1.5rem;
+            margin-bottom: 0.5rem;
+            font-size: 1rem;
+        }
+
+        /* Toolbar Styling */
+        .toolbar-btn {
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 8px 12px;
+            border-radius: 4px;
+            color: #374151;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .toolbar-btn:hover {
+            background: #e5e7eb;
+            color: #000;
+        }
+
+        /* Printing and PDF Export adjustments */
+        @media print {
+            .no-print, .toolbar, .add-btn {
+                display: none !important;
+            }
+            .page-container {
+                margin: 0;
+                box-shadow: none;
+                width: 100%;
+                padding: 0;
+            }
+            /* Hide hover outlines during print */
+            [contenteditable="true"] {
+                padding: 0;
+            }
+        }
+        
+        .pdf-export-mode .no-print {
+            display: none !important;
+        }
+        .pdf-export-mode [contenteditable="true"] {
+            padding: 0 !important;
+            box-shadow: none !important;
+        }
+
+        /* Content spacing for lists */
+        ul { list-style-type: disc; padding-left: 2rem; margin-top: 0.25rem; margin-bottom: 0.25rem; }
+        ol { list-style-type: decimal; padding-left: 2rem; margin-top: 0.25rem; margin-bottom: 0.25rem; }
+        
+        /* Unit blocks */
+        .unit-block {
+            margin-bottom: 1.5rem;
+            page-break-inside: avoid; /* Keeps units together on export */
+        }
+    </style>
+</head>
+<body class="no-print-wrapper text-gray-900">
+
+    <!-- Fixed Rich Text & Action Toolbar -->
+    <div class="no-print fixed top-0 left-0 right-0 bg-white shadow-md border-b border-gray-200 z-50 flex justify-between items-center px-4 py-2 font-sans">
+        <div class="flex items-center space-x-1 border-r border-gray-300 pr-4">
+            <button class="toolbar-btn" onclick="formatText('bold')" title="Bold (Ctrl+B)"><i class="fas fa-bold"></i></button>
+            <button class="toolbar-btn" onclick="formatText('italic')" title="Italic (Ctrl+I)"><i class="fas fa-italic"></i></button>
+            <button class="toolbar-btn" onclick="formatText('underline')" title="Underline (Ctrl+U)"><i class="fas fa-underline"></i></button>
+            <div class="w-px h-6 bg-gray-300 mx-1"></div>
+            <button class="toolbar-btn" onclick="formatText('insertUnorderedList')" title="Bullet List"><i class="fas fa-list-ul"></i></button>
+            <button class="toolbar-btn" onclick="formatText('insertOrderedList')" title="Numbered List"><i class="fas fa-list-ol"></i></button>
+            <div class="w-px h-6 bg-gray-300 mx-1"></div>
+            <button class="toolbar-btn" onclick="addLink()" title="Insert Link"><i class="fas fa-link"></i></button>
+        </div>
+        
+        <div class="flex items-center space-x-2">
+            <button onclick="exportPDF()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow flex items-center gap-2 font-medium transition-colors">
+                <i class="fas fa-file-pdf"></i> Export to PDF
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Document Container -->
+    <div id="document-canvas" class="page-container">
+        
+        <!-- Header -->
+        <div class="text-center mb-6">
+            <div contenteditable="true" data-placeholder="Founded 1836">Founded 1836</div>
+            <div contenteditable="true" data-placeholder="The Mico University College" class="text-xl font-bold mt-1">The Mico University College</div>
+            <div contenteditable="true" data-placeholder="COURSE OUTLINE" class="text-lg font-bold mt-1 underline">COURSE OUTLINE</div>
+        </div>
+
+        <!-- Section 1: General Info -->
+        <table class="outline-table">
+            <tbody>
+                <tr>
+                    <td colspan="6" class="text-center font-bold bg-gray-100">GENERAL COURSE INFORMATION</td>
+                </tr>
+                <tr>
+                    <td class="label-cell">COURSE TITLE</td>
+                    <td colspan="3"><div contenteditable="true" data-placeholder="Introduction to Curriculum Studies: Development & Management">Introduction to Curriculum Studies: Development & Management</div></td>
+                    <td class="label-cell">COURSE CODE</td>
+                    <td><div contenteditable="true" data-placeholder="YCST3101">YCST3101</div></td>
+                </tr>
+                <tr>
+                    <td class="label-cell">NO. OF CREDITS</td>
+                    <td><div contenteditable="true" data-placeholder="3">3</div></td>
+                    <td class="label-cell" colspan="2">FACULTY</td>
+                    <td colspan="2"><div contenteditable="true" data-placeholder="EDUCATION">EDUCATION</div></td>
+                </tr>
+                <tr>
+                    <td class="label-cell">DEPARTMENT</td>
+                    <td colspan="3"><div contenteditable="true" data-placeholder="PROFESSIONAL STUDIES">PROFESSIONAL STUDIES</div></td>
+                    <td class="label-cell">YEAR GROUP</td>
+                    <td><div contenteditable="true" data-placeholder="3">3</div></td>
+                </tr>
+                <tr>
+                    <td class="label-cell">SEMESTER</td>
+                    <td><div contenteditable="true" data-placeholder="2">2</div></td>
+                    <td class="label-cell" colspan="2">PROGRAMME</td>
+                    <td colspan="2"><div contenteditable="true" data-placeholder="B.Ed.">B.Ed.</div></td>
+                </tr>
+                <tr>
+                    <td class="label-cell">SPECIALIZATION</td>
+                    <td colspan="5"><div contenteditable="true" data-placeholder="N/A">N/A</div></td>
+                </tr>
+                <tr>
+                    <td class="label-cell">PRE-REQUISITES<br><span class="font-normal text-xs">(Course Title & Code)</span></td>
+                    <td colspan="2"><div contenteditable="true" data-placeholder="Fundamentals of Teaching (YFNT2101), Introduction to Foundations of Education (YFED2101)">Fundamentals of Teaching (YFNT2101), Introduction to Foundations of Education (YFED2101)</div></td>
+                    <td class="label-cell" colspan="2">CO-REQUISITES<br><span class="font-normal text-xs">(Course Title & Code)</span></td>
+                    <td><div contenteditable="true" data-placeholder="Introduction to Assessment in Education (YAED3101)">Introduction to Assessment in Education (YAED3101)</div></td>
+                </tr>
+                <tr>
+                    <td class="label-cell">MODALITY</td>
+                    <td><div contenteditable="true" data-placeholder="Online/In-person">Online/In-person</div></td>
+                    <td class="label-cell" colspan="2">LANGUAGE OF INSTRUCTION</td>
+                    <td><div contenteditable="true" data-placeholder="English">English</div></td>
+                    <td class="label-cell text-center" style="width:15%">DURATION<br><div contenteditable="true" data-placeholder="45 hours" class="font-normal mt-1">45 hours</div></td>
+                </tr>
+                <tr>
+                    <td class="label-cell">COURSE TYPE</td>
+                    <td colspan="5">
+                        <div class="grid grid-cols-3 gap-2 font-normal text-sm">
+                            <div><span class="check-toggle" onclick="toggleCheckbox(this)">☐</span> GENERAL EDUCATION</div>
+                            <div><span class="check-toggle" onclick="toggleCheckbox(this)">☐</span> SPECIALIZATION</div>
+                            <div><span class="check-toggle" onclick="toggleCheckbox(this)">☐</span> TEACHING PRACTICE</div>
+                            <div><span class="check-toggle" onclick="toggleCheckbox(this)">☑</span> PROFESSIONAL STUDIES</div>
+                            <div><span class="check-toggle" onclick="toggleCheckbox(this)">☐</span> ADJUNCT/COMPLEMENTARY</div>
+                            <div><span class="check-toggle" onclick="toggleCheckbox(this)">☐</span> ELECTIVE</div>
+                            <div><span class="check-toggle" onclick="toggleCheckbox(this)">☐</span> CLINICAL/PRACTICUM</div>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- Section 2: Rationale -->
+        <div class="section-header">COURSE RATIONALE:</div>
+        <div contenteditable="true" class="text-justify mb-4" data-placeholder="Enter course rationale here...">
+            This course is timely and important as educators interrogate the needs of 21st century learners and how 21st century teachers will support these learning needs. Fundamental to addressing these needs is understanding the nature, value, and impact of curriculum, that is, how curriculum as a dynamic field both impacts and is impacted by societal changes. This understanding should better position third-year aspiring teachers to appreciate the pertinent role they play as stakeholders in the process of curriculum development, management, and evaluation. Trends in curriculum reform, the influence of globalization on education, and evidence of a mismatch between the written (formal) curriculum and contextual realities serve to confirm the need for teachers to acquire foundational knowledge of the field and how it operates. This implies that teachers at all levels of the education system should (a) possess the skills and dispositions for making curriculum-related decisions (b) keep pace with global trends and (c) be au-fait with the principles for designing, managing, and evaluating/assessing curricula that are contextually relevant.
+        </div>
+
+        <!-- Section 3: Description -->
+        <div class="section-header">COURSE DESCRIPTION:</div>
+        <div contenteditable="true" class="text-justify mb-4" data-placeholder="Enter course description here...">
+            This course introduces the foundations of curriculum and diverse theoretical and ideological frameworks for developing, implementing, managing, and evaluating curricula in various educational contexts. Aspiring teachers are engaged in authentic learning experiences that equip them to apply the technical skills for designing, developing, and evaluating curriculum as an integral part of their orientation to the teaching profession. The course is organized in three units:
+            <ol>
+                <li>Unit 1: Foundations of the Curriculum</li>
+                <li>Unit 2: Introduction to Curriculum Design and Development.</li>
+                <li>Unit 3: Introduction to Curriculum Implementation and Management</li>
+            </ol>
+            The assessment tasks provide the opportunities for aspiring teachers to develop the competencies in designing and developing a curriculum. The course is assessed by coursework only and includes in-class activities, group projects and in-class tests. Aspiring teachers are engaged in research and critical discourse surrounding curricular concepts.
+        </div>
+
+        <!-- Section 4: Learning Outcomes -->
+        <div class="section-header">COURSE LEARNING OUTCOMES</div>
+        <div class="mb-4">
+            <div contenteditable="true" data-placeholder="At the end of the course, participants will:">At the end of the course, participants will:</div>
+            <div contenteditable="true" data-placeholder="Enter outcomes here..." class="ml-4 mt-1">
+                <ul>
+                    <li>Design a curriculum unit that appropriately addresses current educational issues.</li>
+                    <li>Evaluate the professional disposition of curriculum specialists, while acknowledging their role as teachers who contribute to the curriculum process.</li>
+                    <li>Reflect on the process of curriculum implementation as a change process.</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Section 5: Course Content Outline (Dynamic Units) -->
+        <div class="section-header">COURSE CONTENT OUTLINE</div>
+        
+        <div id="units-container">
+            <!-- Template Unit 1 -->
+            <div class="unit-block border-b border-gray-300 pb-4">
+                <div class="flex justify-between font-bold text-md mb-2">
+                    <div contenteditable="true" data-placeholder="UNIT 1: Foundations of the Curriculum" class="w-3/4">UNIT 1: Foundations of the Curriculum</div>
+                    <div contenteditable="true" data-placeholder="(18 Hours)" class="w-1/4 text-right">(18 Hours)</div>
+                </div>
+                
+                <div class="font-bold underline text-sm mb-1">UNIT LEARNER OUTCOMES</div>
+                <div contenteditable="true" data-placeholder="Enter unit outcomes..." class="mb-3 text-sm ml-4">
+                    <ul>
+                        <li>Discuss various perspectives of curriculum.</li>
+                        <li>Differentiate among the types of curricula.</li>
+                        <li>Analyze the impact of curricular conceptions and foundations on educational initiatives.</li>
+                        <li>Review the nature of the curriculum and its impact on teaching and learning.</li>
+                    </ul>
+                </div>
+
+                <div class="font-bold underline text-sm mb-1">SUMMARY OF CONTENT</div>
+                <div contenteditable="true" data-placeholder="Enter content summary..." class="mb-3 text-sm ml-4">
+                    <ol type="a">
+                        <li>Define the perspectives of the curriculum.</li>
+                        <li>Types of curricula - hidden, null, formal, informal, concomitant etc.</li>
+                        <li>Conceptions of curriculum: Academic, Cognitive process, Humanistic, Technology, Social Reconstruction.</li>
+                        <li>Foundations of the curriculum:
+                            <ul>
+                                <li>Philosophical O Traditional and Contemporary.</li>
+                                <li>Historical- Pre and Post Emancipation (Jamaica)</li>
+                                <li>Sociology of Education</li>
+                                <li>Psychological- impact of the field of psychology on education.</li>
+                            </ul>
+                        </li>
+                        <li>Past and Present Educational Trends and Initiatives such as: ROSE, ASTEP, CAP (Jamaica), STEM/STEAM/STREAM, SWPBIS, Civics Education, Multicultural Education</li>
+                    </ol>
+                </div>
+
+                <div class="font-bold underline text-sm mb-1">SUGGESTED LEARNING ACTIVITIES</div>
+                <div contenteditable="true" data-placeholder="Enter suggested activities..." class="mb-3 text-sm ml-4">
+                    <ul>
+                        <li>Critical discussion of how foundations influence curriculum design, development and implementation.</li>
+                        <li>Debate on philosophical, sociological, and psychological issues.</li>
+                        <li>Review features of curriculum documents/guides design.</li>
+                        <li>Review initiatives (past and current) in light of how they have been influenced by these foundations.</li>
+                    </ul>
+                </div>
+
+                <div class="font-bold underline text-sm mb-1">FORMATIVE AND/OR DIAGNOSTIC ASSESSMENT</div>
+                <div contenteditable="true" data-placeholder="Enter assessments..." class="mb-1 text-sm ml-4">
+                    <ul>
+                        <li>Reflections on curriculum concepts.</li>
+                        <li>Writing a curriculum philosophical statement.</li>
+                    </ul>
+                </div>
+                
+                <div class="no-print text-right mt-2">
+                    <button onclick="removeUnit(this)" class="text-red-500 hover:text-red-700 text-xs font-sans"><i class="fas fa-trash"></i> Delete Unit</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add Unit Button -->
+        <button onclick="addUnit()" class="no-print mt-2 mb-6 border-2 border-dashed border-gray-400 text-gray-600 hover:bg-gray-100 hover:border-gray-600 hover:text-gray-900 w-full py-3 rounded font-sans font-medium transition-colors">
+            <i class="fas fa-plus-circle"></i> Add Another Unit
+        </button>
+
+        <!-- Section 6: Assessment Framework -->
+        <div class="section-header">COURSE ASSESSMENT FRAMEWORK:</div>
+        <div contenteditable="true" class="text-sm italic mb-2" data-placeholder="Enter assessment framework intro...">
+            The nature of both formative and summative aspects of the framework is to be included. Suggest weighting for assessment tasks that will contribute to overall grade for the course. Students' involvement (self and/or peer assessment) would be a part of this framework.
+        </div>
+
+        <table class="outline-table" id="assessment-table">
+            <thead>
+                <tr>
+                    <th style="width: 25%">Assessment Method</th>
+                    <th style="width: 60%">Description</th>
+                    <th style="width: 15%" class="text-center">Weight</th>
+                </tr>
+            </thead>
+            <tbody id="assessment-tbody">
+                <tr>
+                    <td><div contenteditable="true" data-placeholder="1. Class Presentation">1. Class Presentation</div></td>
+                    <td><div contenteditable="true" data-placeholder="Participants will work in groups to research...">Participants will work in groups to research the philosophical, sociological, historial and psychological foundations of national/international curricula and make presentations of their findings.</div></td>
+                    <td class="text-center"><div contenteditable="true" data-placeholder="20%">20%</div></td>
+                </tr>
+                <tr>
+                    <td><div contenteditable="true" data-placeholder="2. Group project - Curriculum Unit">2. Group project - Curriculum Unit</div></td>
+                    <td><div contenteditable="true" data-placeholder="Participants will design a mini four (4) week...">Participants will design a mini four (4) week curriculum unit to alleviate a given educational challenge. It is a collaborative activity with each member accountable for elements in the unit.</div></td>
+                    <td class="text-center"><div contenteditable="true" data-placeholder="50%">50%</div></td>
+                </tr>
+                <tr>
+                    <td><div contenteditable="true" data-placeholder="3. In-class Test">3. In-class Test</div></td>
+                    <td><div contenteditable="true" data-placeholder="Participants will complete a 30-item test...">Participants will complete a 30-item test within a designated period.<br><br>Unit 1 - 8 Marks<br>Unit 2 - 8 Marks<br>Unit 3 - 14 Marks</div></td>
+                    <td class="text-center"><div contenteditable="true" data-placeholder="30%">30%</div></td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <button onclick="addAssessment()" class="no-print mb-6 text-blue-600 hover:text-blue-800 text-sm font-sans font-medium flex items-center gap-1">
+            <i class="fas fa-plus"></i> Add Assessment Row
+        </button>
+
+        <!-- Section 7 & 8: Texts and Resources -->
+        <div class="outline-table" style="border: 1px solid black; padding: 10px; margin-bottom: 1.5rem;">
+            <div class="font-bold bg-gray-100 p-1 border-b border-black mb-2 uppercase text-sm">PRESCRIBED TEXT(S) AND RECOMMENDED READINGS</div>
+            <div contenteditable="true" class="text-sm px-2 pb-2" data-placeholder="Enter readings here...">
+                <p class="mb-2">Eisner, E, W., & Vallance, E. (Eds.). (1974) <i>Conflicting Conceptions of Curriculum</i>. Berkeley, CA: McCutchan Publishing Company.</p>
+                <p class="mb-2">Lynch, D., Smith, R., Howarth, M. (2016). <i>Designing the Classroom Curriculum Exploring Curriculum, Assessment and the incorporation of Technology in Classrooms</i> (3rd ed.). Oxford Global Press.</p>
+                <p class="mb-2">Thompson, C., Prescod, G., & Montgomery, A. (2020). An Exploration of philosophical assumptions that inform educational policy in Jamaica: Conversations with former and Current Educational Ministers.</p>
+                <p class="mb-2">Wilkins, J., & Gamble, R. J. (2000). Multicultural education 7. (4) 18-20 Retrieved from eric.edu.gov.</p>
+            </div>
+            
+            <div class="font-bold bg-gray-100 p-1 border-t border-b border-black my-2 uppercase text-sm">RECOMMENDED LEARNING RESOURCES</div>
+            <div contenteditable="true" class="text-sm px-2" data-placeholder="Enter resources here...">
+                <p class="mb-2">Ornstein, A., & Hunkins, F. (2018). <i>Curriculum Foundations, Principles, and Issues</i> (7th ed.). Essex, England: Pearson Education Limited.</p>
+                <p>Wiggins, G. & McTighe, J. (1998). <i>The understanding by design guide to creating high quality units</i>. Association for Supervision and Curriculum Development.</p>
+            </div>
+        </div>
+
+        <!-- Section 10: Academic Policies -->
+        <div class="section-header">ACADEMIC CONDUCT POLICY</div>
+        
+        <div class="mb-4 text-sm">
+            <div class="font-bold uppercase mb-1" contenteditable="true" data-placeholder="CLASS ATTENDANCE">CLASS ATTENDANCE</div>
+            <div contenteditable="true" class="text-justify mb-3" data-placeholder="Policy text...">Students are expected to arrive for class on time and to remain for the scheduled period for the class. A student is considered to be late 10 minutes after the start of class as scheduled on the timetable. If a student misses 30% or more of the scheduled class time, he/she is deemed to be absent.</div>
+
+            <div class="font-bold uppercase mb-1" contenteditable="true" data-placeholder="ASSESSMENT">ASSESSMENT</div>
+            <div contenteditable="true" class="text-justify mb-3" data-placeholder="Policy text...">Students are responsible for meeting ALL assessment requirements for each course in which they are enrolled including deadlines established by the lecturer.</div>
+
+            <div class="font-bold mb-1" contenteditable="true" data-placeholder="Late Submission">Late Submission</div>
+            <div contenteditable="true" class="text-justify mb-3" data-placeholder="Policy text...">The penalty for late submission will be 5% of the total possible mark for the assessment per normal working day for up to 10 working days after the due date for submission.<br><br>A student will be required to sign, indicating that the assignment has been handed in and will be given a receipt. Keep the receipt in a safe place. No assignment will be accepted after 10 working days.</div>
+
+            <div class="font-bold uppercase mb-1" contenteditable="true" data-placeholder="ACADEMIC CONDUCT">ACADEMIC CONDUCT</div>
+            <div contenteditable="true" class="text-justify mb-3" data-placeholder="Policy text...">Students are expected to observe reasonable rules of conduct in classrooms and laboratories, and during all activities that are part of course requirements. The lecturer has the authority to deny the disruptive student the privilege of attending the class.</div>
+
+            <div class="font-bold mb-1" contenteditable="true" data-placeholder="Plagiarism">Plagiarism</div>
+            <div contenteditable="true" class="text-justify mb-3" data-placeholder="Policy text...">Plagiarism includes, but is not limited to, the exact duplication of another's work and the incorporation of a substantial or essential portion without appropriate citation, copying and pasting information from websites or any publications, paying for a paper written by someone else or using one's work which was previously submitted for a grade in another course.</div>
+
+            <div class="font-bold mb-1" contenteditable="true" data-placeholder="Consequences of Academic Misconduct">Consequences of Academic Misconduct</div>
+            <div contenteditable="true" class="text-justify mb-1" data-placeholder="Policy text...">In all cases, a report will be prepared using the Academic Misconduct Report Form (AMRF). In cases of plagiarism, based on the severity of the offence, a faculty member may employ any of the following, in accordance with the Academic Integrity Policy:</div>
+            
+            <div contenteditable="true" class="ml-4 mb-2" data-placeholder="List of consequences...">
+                <ol type="i">
+                    <li class="mb-1"><strong>Warning:</strong> If the faculty member believes this to be the first offense, he/she indicates to the student that further academic dishonesty will result in other sanctions being imposed.</li>
+                    <li class="mb-1"><strong>Resubmission of work:</strong> The faculty member may require that the work in question be rewritten in conformance with proper academic standards and requirements. The faculty member may also specify other requirements.</li>
+                    <li class="mb-1"><strong>Grade reduction:</strong> The student's grade for a test, project or other academic work may be lowered.</li>
+                    <li class="mb-1"><strong>Failing:</strong> A grade of "E" is assigned for the assignment.</li>
+                </ol>
+            </div>
+            <div contenteditable="true" class="italic" data-placeholder="(Source: ...)">(Source: Undergraduate Student Handbook, 2017-2020, pp. 41-59)</div>
+        </div>
+
+    </div>
+
+    <!-- Custom Confirmation Modal -->
+    <div id="custom-modal" class="no-print fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-[100] font-sans">
+        <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full mx-4">
+            <h3 class="text-lg font-bold text-gray-900 mb-2">Confirm Deletion</h3>
+            <p class="text-gray-600 mb-6" id="modal-message">Are you sure you want to delete this?</p>
+            <div class="flex justify-end gap-3">
+                <button onclick="closeModal()" class="px-4 py-2 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded font-medium transition-colors">Cancel</button>
+                <button id="modal-confirm-btn" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-medium transition-colors">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript Interactions -->
+    <script>
+        // Checkbox Toggle logic
+        function toggleCheckbox(element) {
+            if (element.innerText === '☐') {
+                element.innerText = '☑';
+            } else {
+                element.innerText = '☐';
+            }
+        }
+
+        // Rich Text Formatting Logic
+        function formatText(command) {
+            document.execCommand(command, false, null);
+            // Re-focus the editor if needed, though usually it maintains selection
+        }
+
+        function addLink() {
+            const url = prompt('Enter the link URL:');
+            if (url) {
+                document.execCommand('createLink', false, url);
+            }
+        }
+
+        // Add Unit Logic
+        function addUnit() {
+            const container = document.getElementById('units-container');
+            const unitCount = container.querySelectorAll('.unit-block').length + 1;
+            
+            const unitHTML = `
+            <div class="unit-block border-b border-gray-300 pb-4 mt-4">
+                <div class="flex justify-between font-bold text-md mb-2">
+                    <div contenteditable="true" data-placeholder="UNIT ${unitCount}: [Unit Name]" class="w-3/4">UNIT ${unitCount}: [Unit Name]</div>
+                    <div contenteditable="true" data-placeholder="(0 Hours)" class="w-1/4 text-right">(0 Hours)</div>
+                </div>
+                
+                <div class="font-bold underline text-sm mb-1">UNIT LEARNER OUTCOMES</div>
+                <div contenteditable="true" data-placeholder="Enter unit outcomes..." class="mb-3 text-sm ml-4">
+                    <ul><li>[Outcome 1]</li></ul>
+                </div>
+
+                <div class="font-bold underline text-sm mb-1">SUMMARY OF CONTENT</div>
+                <div contenteditable="true" data-placeholder="Enter content summary..." class="mb-3 text-sm ml-4">
+                    <ol type="a"><li>[Topic 1]</li></ol>
+                </div>
+
+                <div class="font-bold underline text-sm mb-1">SUGGESTED LEARNING ACTIVITIES</div>
+                <div contenteditable="true" data-placeholder="Enter suggested activities..." class="mb-3 text-sm ml-4">
+                    <ul><li>[Activity 1]</li></ul>
+                </div>
+
+                <div class="font-bold underline text-sm mb-1">FORMATIVE AND/OR DIAGNOSTIC ASSESSMENT</div>
+                <div contenteditable="true" data-placeholder="Enter assessments..." class="mb-1 text-sm ml-4">
+                    <ul><li>[Assessment 1]</li></ul>
+                </div>
+                
+                <div class="no-print text-right mt-2">
+                    <button onclick="removeUnit(this)" class="text-red-500 hover:text-red-700 text-xs font-sans"><i class="fas fa-trash"></i> Delete Unit</button>
+                </div>
+            </div>`;
+            
+            container.insertAdjacentHTML('beforeend', unitHTML);
+        }
+
+        let elementToDelete = null;
+
+        function showModal(message, confirmCallback) {
+            document.getElementById('modal-message').innerText = message;
+            const modal = document.getElementById('custom-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            
+            const confirmBtn = document.getElementById('modal-confirm-btn');
+            confirmBtn.onclick = function() {
+                confirmCallback();
+                closeModal();
+            };
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('custom-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            elementToDelete = null;
+        }
+
+        function removeUnit(btnElement) {
+            elementToDelete = btnElement.closest('.unit-block');
+            showModal('Are you sure you want to delete this unit?', function() {
+                if (elementToDelete) {
+                    elementToDelete.remove();
+                }
+            });
+        }
+
+        // Add Assessment Row
+        function addAssessment() {
+            const tbody = document.getElementById('assessment-tbody');
+            const rowCount = tbody.querySelectorAll('tr').length + 1;
+            
+            const rowHTML = `
+                <tr>
+                    <td>
+                        <div contenteditable="true" data-placeholder="${rowCount}. New Assessment Method">${rowCount}. New Assessment Method</div>
+                    </td>
+                    <td>
+                        <div contenteditable="true" data-placeholder="Description of the assessment...">Description of the assessment...</div>
+                    </td>
+                    <td class="text-center relative group">
+                        <div contenteditable="true" data-placeholder="0%">0%</div>
+                        <button onclick="removeAssessment(this)" class="no-print absolute -right-6 top-2 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity" title="Remove Row"><i class="fas fa-times-circle"></i></button>
+                    </td>
+                </tr>
+            `;
+            tbody.insertAdjacentHTML('beforeend', rowHTML);
+        }
+
+        function removeAssessment(btnElement) {
+            elementToDelete = btnElement.closest('tr');
+            showModal('Are you sure you want to remove this assessment row?', function() {
+                if (elementToDelete) {
+                    elementToDelete.remove();
+                }
+            });
+        }
+
+        // PDF Export Logic using html2pdf
+        function exportPDF() {
+            const element = document.getElementById('document-canvas');
+            const body = document.body;
+            
+            // Add a class to hide interactive/UI elements explicitly before capturing
+            body.classList.add('pdf-export-mode');
+
+            // Find course code to name the file appropriately
+            let courseCode = "Course_Outline";
+            try {
+                // Try to find the inner text of the course code field
+                const cells = document.querySelectorAll('.outline-table td');
+                for(let i=0; i<cells.length; i++) {
+                    if(cells[i].innerText.includes('COURSE CODE')) {
+                        let potentialCode = cells[i+1].innerText.trim();
+                        if(potentialCode) courseCode = potentialCode.replace(/[^a-zA-Z0-9]/g, '_');
+                        break;
+                    }
+                }
+            } catch(e) {}
+
+            const opt = {
+                margin:       [15, 10, 15, 10], // top, left, bottom, right in mm
+                filename:     `${courseCode}_Outline.pdf`,
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2, useCORS: true, letterRendering: true },
+                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                pagebreak:    { mode: ['avoid-all', 'css', 'legacy'] }
+            };
+
+            // Generate PDF
+            html2pdf().set(opt).from(element).save().then(() => {
+                // Remove export mode class after generating
+                body.classList.remove('pdf-export-mode');
+            });
+        }
+    </script>
+</body>
+</html>
