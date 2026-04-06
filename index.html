@@ -24,10 +24,10 @@
 
         /* A4 Paper Styling */
         .page-container {
-            width: 210mm;
+            width: 230mm; /* Widened the container so content doesn't shrink */
             min-height: 297mm;
             margin: 80px auto 40px auto; /* 80px top margin to account for fixed toolbar */
-            padding: 20mm 15mm;
+            padding: 20mm 25mm; /* Balanced 25mm padding on left and right */
             background: white;
             box-shadow: 0 10px 25px rgba(0,0,0,0.15);
             line-height: 1.5;
@@ -125,9 +125,13 @@
             align-items: center;
             gap: 6px;
         }
-        .toolbar-btn:hover {
+        .toolbar-btn:hover:not(:disabled) {
             background: #e5e7eb;
             color: #000;
+        }
+        .toolbar-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
         }
 
         /* Printing and PDF Export adjustments */
@@ -171,6 +175,12 @@
     <!-- Fixed Rich Text & Action Toolbar -->
     <div class="no-print fixed top-0 left-0 right-0 bg-white shadow-md border-b border-gray-200 z-50 flex justify-between items-center px-4 py-2 font-sans">
         <div class="flex items-center space-x-1 border-r border-gray-300 pr-4">
+            <!-- Undo / Redo -->
+            <button id="btn-undo" class="toolbar-btn" onclick="undo()" title="Undo (Ctrl+Z)" disabled><i class="fas fa-undo"></i></button>
+            <button id="btn-redo" class="toolbar-btn" onclick="redo()" title="Redo (Ctrl+Y)" disabled><i class="fas fa-redo"></i></button>
+            <div class="w-px h-6 bg-gray-300 mx-1"></div>
+
+            <!-- Formatting -->
             <button class="toolbar-btn" onclick="formatText('bold')" title="Bold (Ctrl+B)"><i class="fas fa-bold"></i></button>
             <button class="toolbar-btn" onclick="formatText('italic')" title="Italic (Ctrl+I)"><i class="fas fa-italic"></i></button>
             <button class="toolbar-btn" onclick="formatText('underline')" title="Underline (Ctrl+U)"><i class="fas fa-underline"></i></button>
@@ -181,7 +191,8 @@
             <button class="toolbar-btn" onclick="addLink()" title="Insert Link"><i class="fas fa-link"></i></button>
         </div>
         
-        <div class="flex items-center space-x-2">
+        <div class="flex items-center space-x-4">
+            <span id="save-status" class="text-sm text-gray-500 font-medium italic"><i class="fas fa-check-circle text-green-500"></i> Saved</span>
             <button onclick="exportPDF()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow flex items-center gap-2 font-medium transition-colors">
                 <i class="fas fa-file-pdf"></i> Export to PDF
             </button>
@@ -450,20 +461,172 @@
 
     </div>
 
-    <!-- Custom Confirmation Modal -->
+    <!-- Generic Confirmation & Alert Modal -->
     <div id="custom-modal" class="no-print fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-[100] font-sans">
         <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full mx-4">
-            <h3 class="text-lg font-bold text-gray-900 mb-2">Confirm Deletion</h3>
-            <p class="text-gray-600 mb-6" id="modal-message">Are you sure you want to delete this?</p>
+            <h3 class="text-lg font-bold text-gray-900 mb-2" id="modal-title">Alert</h3>
+            <p class="text-gray-600 mb-6" id="modal-message">Notification message here</p>
             <div class="flex justify-end gap-3">
-                <button onclick="closeModal()" class="px-4 py-2 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded font-medium transition-colors">Cancel</button>
-                <button id="modal-confirm-btn" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-medium transition-colors">Delete</button>
+                <button id="modal-cancel-btn" onclick="closeModal()" class="px-4 py-2 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded font-medium transition-colors">Cancel</button>
+                <button id="modal-confirm-btn" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-colors">OK</button>
             </div>
         </div>
     </div>
 
-    <!-- JavaScript Interactions -->
+    <!-- Insert Link Modal -->
+    <div id="link-modal" class="no-print fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-[100] font-sans">
+        <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full mx-4">
+            <h3 class="text-lg font-bold text-gray-900 mb-2">Insert Link</h3>
+            <p class="text-sm text-gray-600 mb-4">Enter the URL for the selected text.</p>
+            <input type="url" id="link-url-input" class="w-full border border-gray-300 rounded p-2 mb-6 outline-none focus:border-blue-500" placeholder="https://example.com" value="https://">
+            <div class="flex justify-end gap-3">
+                <button onclick="closeLinkModal()" class="px-4 py-2 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded font-medium transition-colors">Cancel</button>
+                <button onclick="confirmLinkAdd()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-colors">Insert</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript Interactions & State Management -->
     <script>
+        /* === State Management & IndexedDB === */
+        let db;
+        let historyStack = [];
+        let historyIndex = -1;
+        let isRestoring = false;
+        let inputTimer;
+
+        // Initialize IndexedDB
+        document.addEventListener("DOMContentLoaded", () => {
+            const request = indexedDB.open("CourseOutlineDB", 1);
+            
+            request.onupgradeneeded = (e) => {
+                db = e.target.result;
+                if(!db.objectStoreNames.contains("saves")) {
+                    db.createObjectStore("saves", { keyPath: "id" });
+                }
+            };
+            
+            request.onsuccess = (e) => {
+                db = e.target.result;
+                loadFromDB();
+            };
+
+            // Monitor text changes to trigger history/save
+            document.getElementById('document-canvas').addEventListener('input', () => {
+                clearTimeout(inputTimer);
+                setSaveStatus('Saving...');
+                inputTimer = setTimeout(() => {
+                    captureState();
+                }, 800); // 800ms debounce
+            });
+
+            // Keyboard shortcuts
+            document.addEventListener('keydown', function(e) {
+                if (e.ctrlKey || e.metaKey) {
+                    if (e.key === 'z') {
+                        e.preventDefault();
+                        undo();
+                    } else if (e.key === 'y' || (e.key === 'Z' && e.shiftKey)) {
+                        e.preventDefault();
+                        redo();
+                    }
+                }
+            });
+        });
+
+        function setSaveStatus(text, isError = false) {
+            const statusEl = document.getElementById('save-status');
+            if (isError) {
+                statusEl.innerHTML = `<i class="fas fa-exclamation-triangle text-red-500"></i> ${text}`;
+            } else if (text === 'Saved') {
+                statusEl.innerHTML = `<i class="fas fa-check-circle text-green-500"></i> ${text}`;
+            } else {
+                statusEl.innerHTML = `<i class="fas fa-spinner fa-spin text-blue-500"></i> ${text}`;
+            }
+        }
+
+        function loadFromDB() {
+            const tx = db.transaction("saves", "readonly");
+            const store = tx.objectStore("saves");
+            const req = store.get("current_draft");
+            
+            req.onsuccess = () => {
+                if(req.result && req.result.content) {
+                    document.getElementById('document-canvas').innerHTML = req.result.content;
+                }
+                captureState(true); // initialize the history stack with the loaded content
+            };
+        }
+
+        function saveToDB(html) {
+            if(!db) return;
+            const tx = db.transaction("saves", "readwrite");
+            const store = tx.objectStore("saves");
+            store.put({ id: "current_draft", content: html, timestamp: Date.now() });
+            
+            tx.oncomplete = () => {
+                setSaveStatus('Saved');
+            };
+            tx.onerror = () => {
+                setSaveStatus('Save Failed', true);
+            };
+        }
+
+        function captureState(isInit = false) {
+            if (isRestoring) return;
+            
+            const html = document.getElementById('document-canvas').innerHTML;
+            
+            if (isInit) {
+                historyStack = [html];
+                historyIndex = 0;
+            } else {
+                // If we are making a change after undoing, truncate the redo stack
+                if (historyIndex < historyStack.length - 1) {
+                    historyStack = historyStack.slice(0, historyIndex + 1);
+                }
+                // Only push if it actually changed
+                if (historyStack[historyIndex] !== html) {
+                    historyStack.push(html);
+                    historyIndex++;
+                    saveToDB(html);
+                } else {
+                    setSaveStatus('Saved'); // Still showing saved if no delta
+                }
+            }
+            updateUndoRedoButtons();
+        }
+
+        function updateUndoRedoButtons() {
+            document.getElementById('btn-undo').disabled = historyIndex <= 0;
+            document.getElementById('btn-redo').disabled = historyIndex >= historyStack.length - 1;
+        }
+
+        function undo() {
+            if (historyIndex > 0) {
+                isRestoring = true;
+                historyIndex--;
+                document.getElementById('document-canvas').innerHTML = historyStack[historyIndex];
+                saveToDB(historyStack[historyIndex]);
+                updateUndoRedoButtons();
+                // Release the restore block slightly after to allow DOM updates
+                setTimeout(() => isRestoring = false, 50);
+            }
+        }
+
+        function redo() {
+            if (historyIndex < historyStack.length - 1) {
+                isRestoring = true;
+                historyIndex++;
+                document.getElementById('document-canvas').innerHTML = historyStack[historyIndex];
+                saveToDB(historyStack[historyIndex]);
+                updateUndoRedoButtons();
+                setTimeout(() => isRestoring = false, 50);
+            }
+        }
+
+        /* === Interactive Actions === */
+
         // Checkbox Toggle logic
         function toggleCheckbox(element) {
             if (element.innerText === '☐') {
@@ -471,19 +634,51 @@
             } else {
                 element.innerText = '☐';
             }
+            captureState();
         }
 
         // Rich Text Formatting Logic
         function formatText(command) {
             document.execCommand(command, false, null);
-            // Re-focus the editor if needed, though usually it maintains selection
+            captureState();
         }
 
+        // Custom Link Modal Logic
+        let savedSelectionRange = null;
+
         function addLink() {
-            const url = prompt('Enter the link URL:');
-            if (url) {
-                document.execCommand('createLink', false, url);
+            const selection = window.getSelection();
+            if (selection.rangeCount > 0 && selection.toString().length > 0) {
+                savedSelectionRange = selection.getRangeAt(0);
+                document.getElementById('link-url-input').value = 'https://';
+                const modal = document.getElementById('link-modal');
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+                document.getElementById('link-url-input').focus();
+            } else {
+                showModal('Please select/highlight some text first to add a link.', null, true);
             }
+        }
+
+        function closeLinkModal() {
+            const modal = document.getElementById('link-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            savedSelectionRange = null;
+        }
+
+        function confirmLinkAdd() {
+            const url = document.getElementById('link-url-input').value;
+            if (url && savedSelectionRange) {
+                // Restore the text selection before executing the command
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(savedSelectionRange);
+                
+                document.execCommand('createLink', false, url);
+                captureState();
+            }
+            closeLinkModal();
         }
 
         // Add Unit Logic
@@ -524,37 +719,7 @@
             </div>`;
             
             container.insertAdjacentHTML('beforeend', unitHTML);
-        }
-
-        let elementToDelete = null;
-
-        function showModal(message, confirmCallback) {
-            document.getElementById('modal-message').innerText = message;
-            const modal = document.getElementById('custom-modal');
-            modal.classList.remove('hidden');
-            modal.classList.add('flex');
-            
-            const confirmBtn = document.getElementById('modal-confirm-btn');
-            confirmBtn.onclick = function() {
-                confirmCallback();
-                closeModal();
-            };
-        }
-
-        function closeModal() {
-            const modal = document.getElementById('custom-modal');
-            modal.classList.add('hidden');
-            modal.classList.remove('flex');
-            elementToDelete = null;
-        }
-
-        function removeUnit(btnElement) {
-            elementToDelete = btnElement.closest('.unit-block');
-            showModal('Are you sure you want to delete this unit?', function() {
-                if (elementToDelete) {
-                    elementToDelete.remove();
-                }
-            });
+            captureState();
         }
 
         // Add Assessment Row
@@ -577,6 +742,57 @@
                 </tr>
             `;
             tbody.insertAdjacentHTML('beforeend', rowHTML);
+            captureState();
+        }
+
+        /* === Generic Modal Operations === */
+        let elementToDelete = null;
+
+        function showModal(message, confirmCallback, isAlert = false) {
+            document.getElementById('modal-message').innerText = message;
+            const modal = document.getElementById('custom-modal');
+            const cancelBtn = document.getElementById('modal-cancel-btn');
+            const confirmBtn = document.getElementById('modal-confirm-btn');
+            const title = document.getElementById('modal-title');
+            
+            if (isAlert) {
+                title.innerText = 'Information';
+                cancelBtn.classList.add('hidden');
+                confirmBtn.innerText = 'OK';
+                confirmBtn.classList.replace('bg-red-600', 'bg-blue-600');
+                confirmBtn.classList.replace('hover:bg-red-700', 'hover:bg-blue-700');
+                confirmBtn.onclick = function() { closeModal(); };
+            } else {
+                title.innerText = 'Confirm Deletion';
+                cancelBtn.classList.remove('hidden');
+                confirmBtn.innerText = 'Delete';
+                confirmBtn.classList.replace('bg-blue-600', 'bg-red-600');
+                confirmBtn.classList.replace('hover:bg-blue-700', 'hover:bg-red-700');
+                confirmBtn.onclick = function() {
+                    if (confirmCallback) confirmCallback();
+                    closeModal();
+                };
+            }
+
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('custom-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            elementToDelete = null;
+        }
+
+        function removeUnit(btnElement) {
+            elementToDelete = btnElement.closest('.unit-block');
+            showModal('Are you sure you want to delete this unit?', function() {
+                if (elementToDelete) {
+                    elementToDelete.remove();
+                    captureState();
+                }
+            });
         }
 
         function removeAssessment(btnElement) {
@@ -584,6 +800,7 @@
             showModal('Are you sure you want to remove this assessment row?', function() {
                 if (elementToDelete) {
                     elementToDelete.remove();
+                    captureState();
                 }
             });
         }
@@ -593,13 +810,10 @@
             const element = document.getElementById('document-canvas');
             const body = document.body;
             
-            // Add a class to hide interactive/UI elements explicitly before capturing
             body.classList.add('pdf-export-mode');
 
-            // Find course code to name the file appropriately
             let courseCode = "Course_Outline";
             try {
-                // Try to find the inner text of the course code field
                 const cells = document.querySelectorAll('.outline-table td');
                 for(let i=0; i<cells.length; i++) {
                     if(cells[i].innerText.includes('COURSE CODE')) {
@@ -611,7 +825,7 @@
             } catch(e) {}
 
             const opt = {
-                margin:       [15, 10, 15, 10], // top, left, bottom, right in mm
+                margin:       [15, 15, 15, 15], // Balanced top, left, bottom, right in mm
                 filename:     `${courseCode}_Outline.pdf`,
                 image:        { type: 'jpeg', quality: 0.98 },
                 html2canvas:  { scale: 2, useCORS: true, letterRendering: true },
@@ -619,9 +833,7 @@
                 pagebreak:    { mode: ['avoid-all', 'css', 'legacy'] }
             };
 
-            // Generate PDF
             html2pdf().set(opt).from(element).save().then(() => {
-                // Remove export mode class after generating
                 body.classList.remove('pdf-export-mode');
             });
         }
