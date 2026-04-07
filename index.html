@@ -192,9 +192,20 @@
             }
         }
 
-        /* Content spacing for lists */
-        ul { list-style-type: disc; padding-left: 2rem; margin-top: 0.25rem; margin-bottom: 0.25rem; }
-        ol { list-style-type: decimal; padding-left: 2rem; margin-top: 0.25rem; margin-bottom: 0.25rem; }
+        /* Content spacing for lists and links (Overriding Tailwind's preflight reset) */
+        .page-container ul { list-style-type: disc; padding-left: 2.5rem; margin-top: 0.5rem; margin-bottom: 0.5rem; }
+        .page-container ol { list-style-type: decimal; padding-left: 2.5rem; margin-top: 0.5rem; margin-bottom: 0.5rem; }
+        .page-container ol[type="a"] { list-style-type: lower-alpha; }
+        .page-container li { margin-bottom: 0.25rem; }
+        
+        [contenteditable="true"] a {
+            color: #2563eb; /* Tailwind blue-600 */
+            text-decoration: underline;
+            cursor: pointer;
+        }
+        [contenteditable="true"] a:hover {
+            color: #1d4ed8; /* Tailwind blue-700 */
+        }
     </style>
 </head>
 <body class="no-print-wrapper text-gray-900 overflow-x-hidden">
