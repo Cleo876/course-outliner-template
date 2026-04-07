@@ -10,11 +10,13 @@
     
     <!-- Font Awesome for Toolbar Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- html2pdf for PDF Generation -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
     <style>
+        /* Global constraint for exact layout measurement */
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+
         /* Academic Font Settings */
         body {
             font-family: 'Times New Roman', Times, serif;
@@ -22,17 +24,24 @@
             color: #000;
         }
 
-        /* A4 Paper Styling */
+        /* A4 Paper Styling (Screen View) */
         .page-container {
-            width: 230mm; /* Widened the container so content doesn't shrink */
+            width: 230mm; /* Wide, comfortable view on screen */
             min-height: 297mm;
-            margin: 80px auto 40px auto; /* 80px top margin to account for fixed toolbar */
-            padding: 20mm 25mm; /* Balanced 25mm padding on left and right */
+            margin: 80px auto 40px auto;
+            padding: 20mm 25mm; /* Perfectly balanced 25mm padding on left and right */
             background: white;
             box-shadow: 0 10px 25px rgba(0,0,0,0.15);
             line-height: 1.5;
             position: relative;
         }
+
+        /* Prevent nasty vertical slicing when breaking across PDF pages */
+        table { page-break-inside: auto; }
+        tr { page-break-inside: avoid; page-break-after: auto; }
+        thead { display: table-header-group; }
+        .unit-block { page-break-inside: avoid; }
+        .section-header { page-break-after: avoid; }
 
         /* Editable Areas - Hover & Focus states */
         [contenteditable="true"] {
@@ -66,6 +75,7 @@
         /* Table Styling matching the PDF */
         .outline-table {
             width: 100%;
+            max-width: 100%;
             border-collapse: collapse;
             margin-bottom: 1rem;
             font-size: 0.9rem;
@@ -75,6 +85,8 @@
             border: 1px solid #000;
             padding: 6px 8px;
             vertical-align: top;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
         }
 
         .outline-table th {
@@ -134,40 +146,49 @@
             cursor: not-allowed;
         }
 
-        /* Printing and PDF Export adjustments */
+        /* --- NATIVE BROWSER PRINT ENGINE STYLING --- */
         @media print {
-            .no-print, .toolbar, .add-btn {
+            @page {
+                size: A4 portrait;
+                /* This perfectly maps the screen padding into native PDF margins! */
+                margin: 20mm 25mm 20mm 25mm !important; 
+            }
+            
+            body {
+                background-color: white !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            
+            /* Hide all UI elements entirely */
+            .no-print, .toolbar, .add-btn, #sidebar-overlay, #sidebar, button.no-print {
                 display: none !important;
             }
+            
             .page-container {
-                margin: 0;
-                box-shadow: none;
-                width: 100%;
-                padding: 0;
+                width: 100% !important; /* Fill the @page boundaries */
+                max-width: 100% !important;
+                margin: 0 !important; /* Reset margin */
+                padding: 0 !important; /* Padding is handled by @page margin */
+                box-shadow: none !important;
+                border: none !important;
             }
-            /* Hide hover outlines during print */
+            
+            /* Clean up editable zones for print */
             [contenteditable="true"] {
-                padding: 0;
+                padding: 0 !important;
+                box-shadow: none !important;
             }
-        }
-        
-        .pdf-export-mode .no-print {
-            display: none !important;
-        }
-        .pdf-export-mode [contenteditable="true"] {
-            padding: 0 !important;
-            box-shadow: none !important;
+            
+            /* Completely hide empty placeholders when printing so the final doc is clean */
+            [contenteditable="true"]:empty::before {
+                display: none !important;
+            }
         }
 
         /* Content spacing for lists */
         ul { list-style-type: disc; padding-left: 2rem; margin-top: 0.25rem; margin-bottom: 0.25rem; }
         ol { list-style-type: decimal; padding-left: 2rem; margin-top: 0.25rem; margin-bottom: 0.25rem; }
-        
-        /* Unit blocks */
-        .unit-block {
-            margin-bottom: 1.5rem;
-            page-break-inside: avoid; /* Keeps units together on export */
-        }
     </style>
 </head>
 <body class="no-print-wrapper text-gray-900 overflow-x-hidden">
@@ -205,7 +226,7 @@
         <div class="flex items-center space-x-4">
             <span id="save-status" class="text-sm text-gray-500 font-medium italic"><i class="fas fa-check-circle text-green-500"></i> Saved</span>
             <button onclick="exportPDF()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow flex items-center gap-2 font-medium transition-colors">
-                <i class="fas fa-file-pdf"></i> Export PDF
+                <i class="fas fa-print"></i> Print / Save PDF
             </button>
         </div>
     </div>
@@ -1086,29 +1107,21 @@
             });
         }
 
-        // PDF Export Logic using html2pdf
+        // PDF Export Logic natively via window.print()
         function exportPDF() {
-            const element = document.getElementById('document-canvas');
-            const body = document.body;
+            // Save the original page title
+            const originalTitle = document.title;
             
-            body.classList.add('pdf-export-mode');
-
-            // Default filename uses the title in the input bar
+            // Set the document title to what we want the PDF filename to be
             let fallbackName = document.getElementById('doc-name-input').value.trim() || "Course_Outline";
-            let courseCode = fallbackName.replace(/[^a-zA-Z0-9_\-]/g, '_');
-
-            const opt = {
-                margin:       [15, 15, 15, 15], // Balanced top, left, bottom, right in mm
-                filename:     `${courseCode}.pdf`,
-                image:        { type: 'jpeg', quality: 0.98 },
-                html2canvas:  { scale: 2, useCORS: true, letterRendering: true },
-                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
-                pagebreak:    { mode: ['avoid-all', 'css', 'legacy'] }
-            };
-
-            html2pdf().set(opt).from(element).save().then(() => {
-                body.classList.remove('pdf-export-mode');
-            });
+            let courseCode = fallbackName.replace(/[^a-zA-Z0-9_\-\s]/g, '_');
+            document.title = courseCode;
+            
+            // Trigger native print dialog
+            window.print();
+            
+            // Restore original document title
+            document.title = originalTitle;
         }
     </script>
 </body>
