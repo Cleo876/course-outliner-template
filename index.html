@@ -10,6 +10,12 @@
     
     <!-- Font Awesome for Toolbar Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- LZ-String for URL Compression -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.5.0/lz-string.min.js"></script>
+    
+    <!-- QRCode.js for QR Code Generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
     <style>
         /* Global constraint for exact layout measurement */
@@ -225,6 +231,9 @@
         
         <div class="flex items-center space-x-4">
             <span id="save-status" class="text-sm text-gray-500 font-medium italic"><i class="fas fa-check-circle text-green-500"></i> Saved</span>
+            <button onclick="openShareModal()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded shadow flex items-center gap-2 font-medium transition-colors">
+                <i class="fas fa-share-alt"></i> Share
+            </button>
             <button onclick="exportPDF()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow flex items-center gap-2 font-medium transition-colors">
                 <i class="fas fa-print"></i> Print / Save PDF
             </button>
@@ -563,11 +572,32 @@
         </div>
     </div>
 
+    <!-- Share Modal -->
+    <div id="share-modal" class="no-print fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-[100] font-sans">
+        <div class="bg-white p-6 rounded-lg shadow-xl max-w-md w-full mx-4 flex flex-col items-center">
+            <div class="w-full flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold text-gray-900">Share Outline</h3>
+                <button onclick="closeShareModal()" class="text-gray-500 hover:text-gray-900 transition-colors"><i class="fas fa-times text-xl"></i></button>
+            </div>
+            <p class="text-sm text-gray-600 mb-4 text-center">Scan the QR code or copy the link below to share this outline directly. No server needed!</p>
+            
+            <!-- QR Code Container (Added relative positioning for the logo) -->
+            <div id="qrcode-container" class="relative bg-white p-4 border border-gray-200 rounded shadow-sm mb-4 min-h-[220px] min-w-[220px] flex items-center justify-center"></div>
+            
+            <!-- Link Input & Copy Button -->
+            <div class="w-full flex gap-2 mb-2">
+                <input type="text" id="share-link-input" readonly class="flex-1 border border-gray-300 rounded p-2 text-sm bg-gray-50 outline-none focus:border-blue-500">
+                <button onclick="copyShareLink(event)" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-colors whitespace-nowrap w-28"><i class="fas fa-copy"></i> Copy</button>
+            </div>
+            <p class="text-xs text-green-600 w-full text-center mt-1"><i class="fas fa-magic"></i> Delta compression active: URL size minimized.</p>
+        </div>
+    </div>
+
     <!-- JavaScript Interactions & State Management -->
     <script>
-        /* === State Management & IndexedDB === */
+        /* === State Management, Data Extraction & IndexedDB === */
         let db;
-        let defaultTemplate = "";
+        let defaultDataJSON = "";
         let currentDocId = localStorage.getItem('activeOutlineId') || null;
 
         let historyStack = [];
@@ -575,20 +605,17 @@
         let isRestoring = false;
         let inputTimer;
 
-        // Initialize IndexedDB & Template
+        // Initialize IndexedDB & Generate pristine JSON template
         document.addEventListener("DOMContentLoaded", () => {
-            // Capture the pristine HTML right off the bat before IndexedDB overwrites it
-            defaultTemplate = document.getElementById('document-canvas').innerHTML;
+            // Instead of massive HTML blob, we extract the precise JSON state immediately.
+            defaultDataJSON = JSON.stringify(extractDocumentData());
 
-            const request = indexedDB.open("CourseOutlineDB", 2); // Version 2 for new schema
-            
+            const request = indexedDB.open("CourseOutlineDB", 2);
             request.onupgradeneeded = (e) => {
                 db = e.target.result;
-                // Delete old v1 store if it exists to cleanly migrate
                 if(db.objectStoreNames.contains("saves")) {
                     db.deleteObjectStore("saves");
                 }
-                // Create new multi-document store
                 if(!db.objectStoreNames.contains("outlines")) {
                     db.createObjectStore("outlines", { keyPath: "id" });
                 }
@@ -596,27 +623,142 @@
             
             request.onsuccess = (e) => {
                 db = e.target.result;
-                initializeApp();
+                
+                const hash = window.location.hash;
+                if (hash.startsWith('#share=')) {
+                    processSharedLink(hash.substring(7));
+                } else {
+                    initializeApp();
+                }
             };
 
-            // Monitor text changes to trigger history/save
             document.getElementById('document-canvas').addEventListener('input', () => {
                 triggerSave();
             });
 
-            // Keyboard shortcuts
             document.addEventListener('keydown', function(e) {
                 if (e.ctrlKey || e.metaKey) {
-                    if (e.key === 'z') {
-                        e.preventDefault();
-                        undo();
-                    } else if (e.key === 'y' || (e.key === 'Z' && e.shiftKey)) {
-                        e.preventDefault();
-                        redo();
-                    }
+                    if (e.key === 'z') { e.preventDefault(); undo(); } 
+                    else if (e.key === 'y' || (e.key === 'Z' && e.shiftKey)) { e.preventDefault(); redo(); }
                 }
             });
         });
+
+        /* --- THE CORE OPTIMIZATION: Extract only data, discard the DOM bloat --- */
+        function extractDocumentData() {
+            // Grab all editable areas that are NOT inside a dynamic container
+            const rootEditables = Array.from(document.querySelectorAll('#document-canvas [contenteditable="true"]'))
+                .filter(el => !el.closest('#units-container') && !el.closest('#assessment-tbody'));
+            const staticData = rootEditables.map(el => el.innerHTML);
+
+            // Grab checkbox toggles
+            const checkboxes = Array.from(document.querySelectorAll('#document-canvas .check-toggle'))
+                .map(el => el.innerText.includes('☑'));
+
+            // Grab dynamic units mapped as arrays of values
+            const units = Array.from(document.querySelectorAll('.unit-block')).map(unit => {
+                return Array.from(unit.querySelectorAll('[contenteditable="true"]')).map(el => el.innerHTML);
+            });
+
+            // Grab dynamic assessment rows
+            const assessments = Array.from(document.querySelectorAll('#assessment-tbody tr')).map(row => {
+                return Array.from(row.querySelectorAll('[contenteditable="true"]')).map(el => el.innerHTML);
+            });
+
+            return { staticData, checkboxes, units, assessments };
+        }
+
+        /* --- THE REHYDRATOR: Injects the tightly packed JSON back into the visual HTML --- */
+        function injectDocumentData(data) {
+            // Restore Units
+            const unitsContainer = document.getElementById('units-container');
+            unitsContainer.innerHTML = '';
+            if(data.units) {
+                data.units.forEach(unitData => {
+                    isRestoring = true; 
+                    addUnit(); // generates a blank template node
+                    isRestoring = false;
+                    const units = document.querySelectorAll('.unit-block');
+                    const lastUnit = units[units.length - 1];
+                    const editables = lastUnit.querySelectorAll('[contenteditable="true"]');
+                    unitData.forEach((html, i) => { if(editables[i]) editables[i].innerHTML = html; });
+                });
+            }
+
+            // Restore Assessments
+            const assBody = document.getElementById('assessment-tbody');
+            assBody.innerHTML = '';
+            if(data.assessments) {
+                data.assessments.forEach(assData => {
+                    isRestoring = true;
+                    addAssessment();
+                    isRestoring = false;
+                    const rows = document.querySelectorAll('#assessment-tbody tr');
+                    const lastRow = rows[rows.length - 1];
+                    const editables = lastRow.querySelectorAll('[contenteditable="true"]');
+                    assData.forEach((html, i) => { if(editables[i]) editables[i].innerHTML = html; });
+                });
+            }
+
+            // Restore Static Editables
+            const rootEditables = Array.from(document.querySelectorAll('#document-canvas [contenteditable="true"]'))
+                .filter(el => !el.closest('#units-container') && !el.closest('#assessment-tbody'));
+            if(data.staticData) {
+                data.staticData.forEach((html, i) => {
+                    if(rootEditables[i]) rootEditables[i].innerHTML = html;
+                });
+            }
+
+            // Restore Checkboxes
+            const checkboxes = document.querySelectorAll('#document-canvas .check-toggle');
+            if(data.checkboxes) {
+                data.checkboxes.forEach((isChecked, i) => {
+                    if(checkboxes[i]) checkboxes[i].innerText = isChecked ? '☑' : '☐';
+                });
+            }
+        }
+
+        // Intelligent loader that gracefully handles new JSON strings or old legacy HTML strings
+        function applyContentToCanvas(contentStr) {
+            if (contentStr && contentStr.startsWith('{"staticData":')) {
+                try {
+                    isRestoring = true;
+                    injectDocumentData(JSON.parse(contentStr));
+                    isRestoring = false;
+                } catch(e) {
+                    console.error("Failed to parse JSON content", e);
+                    document.getElementById('document-canvas').innerHTML = contentStr;
+                }
+            } else {
+                // It's a legacy saved HTML document. Just drop it in directly.
+                // The very next time the user types, it gets upgraded to JSON.
+                document.getElementById('document-canvas').innerHTML = contentStr;
+            }
+        }
+
+        /* --- DELTA COMPRESSION HELPERS FOR SHARING --- */
+        function packDataForShare(currentData) {
+            const defaultData = JSON.parse(defaultDataJSON);
+            return {
+                // Only save the static text if it differs from the default boilerplate
+                s: currentData.staticData.map((val, i) => val === defaultData.staticData[i] ? null : val),
+                c: currentData.checkboxes.map((val, i) => val === defaultData.checkboxes[i] ? null : val),
+                u: currentData.units,
+                a: currentData.assessments
+            };
+        }
+
+        function unpackDataFromShare(packedData) {
+            const defaultData = JSON.parse(defaultDataJSON);
+            return {
+                // Rehydrate the missing data by pulling from the local default template
+                staticData: packedData.s.map((val, i) => val === null ? defaultData.staticData[i] : val),
+                checkboxes: packedData.c ? packedData.c.map((val, i) => val === null ? defaultData.checkboxes[i] : val) : defaultData.checkboxes,
+                units: packedData.u,
+                assessments: packedData.a
+            };
+        }
+
 
         function initializeApp() {
             if (!currentDocId) {
@@ -624,6 +766,158 @@
             } else {
                 loadDocument(currentDocId);
             }
+        }
+
+        // --- Share Link Logic ---
+        function processSharedLink(compressedData) {
+            try {
+                const decompressed = LZString.decompressFromEncodedURIComponent(compressedData);
+                const importedData = JSON.parse(decompressed);
+                
+                if (!importedData) throw new Error("Invalid format");
+
+                const id = Date.now().toString(); 
+                const name = importedData.name ? importedData.name + " (Shared)" : "Shared Outline";
+                
+                let contentToSave;
+                
+                // If it uses our new "v:1" delta-packed payload, we unpack it first
+                if (importedData.v === 1 && importedData.data) {
+                    contentToSave = JSON.stringify(unpackDataFromShare(importedData.data));
+                } else {
+                    // Fallback for older non-delta links
+                    contentToSave = importedData.content; 
+                }
+                
+                const tx = db.transaction("outlines", "readwrite");
+                tx.objectStore("outlines").put({
+                    id: id,
+                    name: name,
+                    content: contentToSave,
+                    updatedAt: Date.now()
+                });
+                
+                tx.oncomplete = () => {
+                    currentDocId = id;
+                    localStorage.setItem('activeOutlineId', id);
+                    document.getElementById('doc-name-input').value = name;
+                    
+                    applyContentToCanvas(contentToSave);
+                    
+                    captureState(true);
+                    updateSidebarList();
+                    setSaveStatus('Imported Shared Link');
+                    
+                    history.replaceState(null, null, window.location.pathname + window.location.search);
+                    showModal('Outline imported successfully from the shared link!', null, true);
+                };
+            } catch (err) {
+                console.error(err);
+                showModal('Error loading shared outline. The link might be broken or corrupted.', null, true);
+                history.replaceState(null, null, window.location.pathname + window.location.search);
+                initializeApp();
+            }
+        }
+
+        async function openShareModal() {
+            const docName = document.getElementById('doc-name-input').value.trim() || "Untitled Outline";
+            
+            // Extract pure data JSON, then PACK it using Delta Compression against default
+            const docData = extractDocumentData(); 
+            const packedData = packDataForShare(docData);
+            
+            // v:1 tells the receiver that this data needs to be unpacked
+            const payload = JSON.stringify({ v: 1, name: docName, data: packedData });
+            
+            // Compress
+            const compressed = LZString.compressToEncodedURIComponent(payload);
+            const baseUrl = "https://cleo876.github.io/course-outliner-template/";
+            const shareUrl = baseUrl + '#share=' + compressed;
+            
+            const modal = document.getElementById('share-modal');
+            const linkInput = document.getElementById('share-link-input');
+            const qrContainer = document.getElementById('qrcode-container');
+
+            // 1. Show loading state in the modal
+            linkInput.value = "Generating short link...";
+            qrContainer.innerHTML = '<div class="flex flex-col items-center justify-center text-blue-600"><i class="fas fa-spinner fa-spin text-4xl mb-3"></i><span class="text-sm font-medium">Shortening URL...</span></div>';
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            
+            let finalUrl = shareUrl;
+            
+            // 2. Attempt to shorten the URL via is.gd API
+            try {
+                const response = await fetch(`https://is.gd/create.php?format=json&url=${encodeURIComponent(shareUrl)}`);
+                const data = await response.json();
+                if (data.shorturl) {
+                    finalUrl = data.shorturl;
+                } else {
+                    console.warn("is.gd API Warning:", data.errormessage);
+                }
+            } catch (err) {
+                console.warn("Shortening failed, falling back to compressed URL", err);
+            }
+            
+            // 3. Update input and prep QR container
+            linkInput.value = finalUrl;
+            qrContainer.innerHTML = '';
+            
+            // 4. Generate QR Code
+            try {
+                // If it shortened successfully, we can use CorrectLevel.H (30% error correction) 
+                // which perfectly supports a large logo overlay.
+                const isShort = finalUrl.length < 100;
+                
+                new QRCode(qrContainer, {
+                    text: finalUrl,
+                    width: 190, // Set to 190 to allow nice padding inside the container
+                    height: 190,
+                    colorDark : "#000000",
+                    colorLight : "#ffffff",
+                    correctLevel : isShort ? QRCode.CorrectLevel.H : QRCode.CorrectLevel.M 
+                });
+                
+                // Inject the centralized curriculum logo overlay
+                const logoHtml = `
+                    <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-full p-1 flex items-center justify-center shadow z-10" style="width: 50px; height: 50px;">
+                        <div class="border-2 border-blue-600 rounded-full w-full h-full flex items-center justify-center bg-blue-50">
+                            <i class="fas fa-book-open text-blue-600 text-lg"></i>
+                        </div>
+                    </div>
+                `;
+                qrContainer.insertAdjacentHTML('beforeend', logoHtml);
+
+            } catch(e) {
+                console.warn("QR Code Generation failed", e);
+                qrContainer.innerHTML = '<p class="text-red-500 text-sm text-center p-4">Outline is slightly too large for a QR Code.<br>Please use the copy link button below.</p>';
+            }
+        }
+
+        function closeShareModal() {
+            const modal = document.getElementById('share-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function copyShareLink(event) {
+            const input = document.getElementById('share-link-input');
+            input.select();
+            input.setSelectionRange(0, 999999);
+            try {
+                document.execCommand("copy");
+                const btn = event.currentTarget;
+                const originalHtml = btn.innerHTML;
+                btn.innerHTML = '<i class="fas fa-check"></i> Copied';
+                btn.classList.replace('bg-blue-600', 'bg-green-600');
+                btn.classList.replace('hover:bg-blue-700', 'hover:bg-green-700');
+                
+                setTimeout(() => {
+                    btn.innerHTML = originalHtml;
+                    btn.classList.replace('bg-green-600', 'bg-blue-600');
+                    btn.classList.replace('hover:bg-green-700', 'hover:bg-blue-700');
+                }, 2000);
+            } catch (err) {}
         }
 
         // --- Sidebar & Document Management Logic ---
@@ -647,7 +941,7 @@
             tx.objectStore("outlines").put({
                 id: id,
                 name: name,
-                content: defaultTemplate,
+                content: defaultDataJSON, // Now saves JSON
                 updatedAt: Date.now()
             });
             
@@ -655,9 +949,10 @@
                 currentDocId = id;
                 localStorage.setItem('activeOutlineId', id);
                 document.getElementById('doc-name-input').value = name;
-                document.getElementById('document-canvas').innerHTML = defaultTemplate;
                 
-                captureState(true); // Reset undo/redo stack
+                applyContentToCanvas(defaultDataJSON);
+                
+                captureState(true);
                 updateSidebarList();
                 closeSidebar();
                 setSaveStatus('Created New');
@@ -673,12 +968,12 @@
                     currentDocId = id;
                     localStorage.setItem('activeOutlineId', id);
                     document.getElementById('doc-name-input').value = req.result.name;
-                    document.getElementById('document-canvas').innerHTML = req.result.content;
                     
-                    captureState(true); // Reset undo/redo stack
+                    applyContentToCanvas(req.result.content);
+                    
+                    captureState(true);
                     updateSidebarList();
                 } else {
-                    // Document not found (maybe deleted in another tab)
                     createNewDocument();
                 }
             };
@@ -693,12 +988,10 @@
                 try {
                     const importedData = JSON.parse(e.target.result);
                     
-                    // Basic validation to ensure it's a valid outline structure
                     if (!importedData || typeof importedData.content !== 'string') {
                         throw new Error("Invalid file format");
                     }
 
-                    // Always generate a new ID so we don't accidentally overwrite existing outlines
                     const id = Date.now().toString(); 
                     const name = importedData.name ? importedData.name + " (Imported)" : "Imported Outline";
                     
@@ -714,19 +1007,17 @@
                         currentDocId = id;
                         localStorage.setItem('activeOutlineId', id);
                         document.getElementById('doc-name-input').value = name;
-                        document.getElementById('document-canvas').innerHTML = importedData.content;
+                        
+                        applyContentToCanvas(importedData.content);
                         
                         captureState(true);
                         updateSidebarList();
                         setSaveStatus('Imported');
                         showModal('Outline imported successfully!', null, true);
                     };
-
                 } catch (err) {
                     showModal('Error importing file. Please make sure it is a valid .crr outline file.', null, true);
                 }
-                
-                // Reset file input so the same file can be imported again if needed
                 event.target.value = '';
             };
             reader.readAsText(file);
@@ -758,7 +1049,6 @@
                 const listEl = document.getElementById('sidebar-list');
                 listEl.innerHTML = '';
                 
-                // Sort by updated time (newest first)
                 const outlines = req.result.sort((a, b) => b.updatedAt - a.updatedAt);
                 
                 outlines.forEach(doc => {
@@ -817,9 +1107,9 @@
                     if (id === currentDocId) {
                         currentDocId = null;
                         localStorage.removeItem('activeOutlineId');
-                        initializeApp(); // Loads another doc or creates a new one
+                        initializeApp(); 
                     } else {
-                        updateSidebarList(); // Just refresh list
+                        updateSidebarList(); 
                     }
                 };
             });
@@ -832,24 +1122,24 @@
             setSaveStatus('Saving...');
             inputTimer = setTimeout(() => {
                 captureState();
-            }, 800); // 800ms debounce
+            }, 800); 
         }
 
         function setSaveStatus(text, isError = false) {
             const statusEl = document.getElementById('save-status');
             if (isError) {
                 statusEl.innerHTML = `<i class="fas fa-exclamation-triangle text-red-500"></i> ${text}`;
-            } else if (text === 'Saved' || text === 'Created New' || text === 'Imported') {
+            } else if (text === 'Saved' || text === 'Created New' || text === 'Imported Shared Link') {
                 statusEl.innerHTML = `<i class="fas fa-check-circle text-green-500"></i> ${text}`;
             } else {
                 statusEl.innerHTML = `<i class="fas fa-spinner fa-spin text-blue-500"></i> ${text}`;
             }
         }
 
-        function saveCurrentDocument(html) {
+        function saveCurrentDocument(contentStr) {
             if(!db || !currentDocId) return;
             const name = document.getElementById('doc-name-input').value.trim() || "Untitled Outline";
-            const content = html || document.getElementById('document-canvas').innerHTML;
+            const content = contentStr || JSON.stringify(extractDocumentData());
 
             const tx = db.transaction("outlines", "readwrite");
             tx.objectStore("outlines").put({
@@ -861,7 +1151,6 @@
             
             tx.oncomplete = () => {
                 setSaveStatus('Saved');
-                // Silently update sidebar list just in case name changed while sidebar open
                 if (!document.getElementById('sidebar').classList.contains('-translate-x-full')) {
                     updateSidebarList();
                 }
@@ -874,24 +1163,21 @@
         function captureState(isInit = false) {
             if (isRestoring) return;
             
-            const html = document.getElementById('document-canvas').innerHTML;
+            const currentDataStr = JSON.stringify(extractDocumentData());
             
             if (isInit) {
-                historyStack = [html];
+                historyStack = [currentDataStr];
                 historyIndex = 0;
             } else {
-                // If we are making a change after undoing, truncate the redo stack
                 if (historyIndex < historyStack.length - 1) {
                     historyStack = historyStack.slice(0, historyIndex + 1);
                 }
-                // Only push if it actually changed
-                if (historyStack[historyIndex] !== html) {
-                    historyStack.push(html);
+                if (historyStack[historyIndex] !== currentDataStr) {
+                    historyStack.push(currentDataStr);
                     historyIndex++;
-                    saveCurrentDocument(html);
+                    saveCurrentDocument(currentDataStr);
                 } else {
-                    // Just a title change or redundant save
-                    saveCurrentDocument(html);
+                    saveCurrentDocument(currentDataStr);
                 }
             }
             updateUndoRedoButtons();
@@ -906,11 +1192,10 @@
             if (historyIndex > 0) {
                 isRestoring = true;
                 historyIndex--;
-                const html = historyStack[historyIndex];
-                document.getElementById('document-canvas').innerHTML = html;
-                saveCurrentDocument(html);
+                const contentStr = historyStack[historyIndex];
+                applyContentToCanvas(contentStr);
+                saveCurrentDocument(contentStr);
                 updateUndoRedoButtons();
-                // Release the restore block slightly after to allow DOM updates
                 setTimeout(() => isRestoring = false, 50);
             }
         }
@@ -919,9 +1204,9 @@
             if (historyIndex < historyStack.length - 1) {
                 isRestoring = true;
                 historyIndex++;
-                const html = historyStack[historyIndex];
-                document.getElementById('document-canvas').innerHTML = html;
-                saveCurrentDocument(html);
+                const contentStr = historyStack[historyIndex];
+                applyContentToCanvas(contentStr);
+                saveCurrentDocument(contentStr);
                 updateUndoRedoButtons();
                 setTimeout(() => isRestoring = false, 50);
             }
@@ -929,7 +1214,6 @@
 
         /* === Interactive Actions === */
 
-        // Checkbox Toggle logic
         function toggleCheckbox(element) {
             if (element.innerText === '☐') {
                 element.innerText = '☑';
@@ -939,13 +1223,11 @@
             triggerSave();
         }
 
-        // Rich Text Formatting Logic
         function formatText(command) {
             document.execCommand(command, false, null);
             triggerSave();
         }
 
-        // Custom Link Modal Logic
         let savedSelectionRange = null;
 
         function addLink() {
@@ -972,18 +1254,15 @@
         function confirmLinkAdd() {
             const url = document.getElementById('link-url-input').value;
             if (url && savedSelectionRange) {
-                // Restore the text selection before executing the command
                 const selection = window.getSelection();
                 selection.removeAllRanges();
                 selection.addRange(savedSelectionRange);
-                
                 document.execCommand('createLink', false, url);
                 triggerSave();
             }
             closeLinkModal();
         }
 
-        // Add Unit Logic
         function addUnit() {
             const container = document.getElementById('units-container');
             const unitCount = container.querySelectorAll('.unit-block').length + 1;
@@ -1021,10 +1300,9 @@
             </div>`;
             
             container.insertAdjacentHTML('beforeend', unitHTML);
-            triggerSave();
+            if (!isRestoring) triggerSave();
         }
 
-        // Add Assessment Row
         function addAssessment() {
             const tbody = document.getElementById('assessment-tbody');
             const rowCount = tbody.querySelectorAll('tr').length + 1;
@@ -1044,7 +1322,7 @@
                 </tr>
             `;
             tbody.insertAdjacentHTML('beforeend', rowHTML);
-            triggerSave();
+            if (!isRestoring) triggerSave();
         }
 
         /* === Generic Modal Operations === */
@@ -1109,18 +1387,13 @@
 
         // PDF Export Logic natively via window.print()
         function exportPDF() {
-            // Save the original page title
             const originalTitle = document.title;
-            
-            // Set the document title to what we want the PDF filename to be
             let fallbackName = document.getElementById('doc-name-input').value.trim() || "Course_Outline";
             let courseCode = fallbackName.replace(/[^a-zA-Z0-9_\-\s]/g, '_');
             document.title = courseCode;
             
-            // Trigger native print dialog
             window.print();
             
-            // Restore original document title
             document.title = originalTitle;
         }
     </script>
