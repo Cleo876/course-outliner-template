@@ -379,6 +379,18 @@
             The assessment tasks provide the opportunities for aspiring teachers to develop the competencies in designing and developing a curriculum. The course is assessed by coursework only and includes in-class activities, group projects and in-class tests. Aspiring teachers are engaged in research and critical discourse surrounding curricular concepts.
         </div>
 
+        <!-- Section 3.5: General Course Objectives (NEW V2 FIELD) -->
+        <div class="section-header">GENERAL COURSE OBJECTIVES</div>
+        <div class="mb-4">
+            <div contenteditable="true" class="v2-field" id="general-objectives-intro" data-placeholder="The general objectives of the course are to:">The general objectives of the course are to:</div>
+            <div contenteditable="true" class="v2-field ml-4 mt-1" id="general-objectives-list" data-placeholder="Enter general objectives here...">
+                <ul>
+                    <li>Develop a comprehensive understanding of the curriculum process and its impact on 21st-century learners.</li>
+                    <li>Equip aspiring teachers with the theoretical and ideological frameworks needed for curriculum design.</li>
+                </ul>
+            </div>
+        </div>
+
         <!-- Section 4: Learning Outcomes -->
         <div class="section-header">COURSE LEARNING OUTCOMES</div>
         <div class="mb-4">
@@ -592,7 +604,7 @@
             </div>
             <p class="text-sm text-gray-600 mb-4 text-center">Scan the QR code or copy the link below to share this outline directly. No server needed!</p>
             
-            <!-- QR Code Container (Added relative positioning for the logo) -->
+            <!-- QR Code Container -->
             <div id="qrcode-container" class="relative bg-white p-4 border border-gray-200 rounded shadow-sm mb-4 min-h-[220px] min-w-[220px] flex items-center justify-center"></div>
             
             <!-- Link Input & Copy Button -->
@@ -657,9 +669,9 @@
 
         /* --- THE CORE OPTIMIZATION: Extract only data, discard the DOM bloat --- */
         function extractDocumentData() {
-            // Grab all editable areas that are NOT inside a dynamic container
+            // Grab all editable areas that are NOT inside a dynamic container and NOT part of the V2 update
             const rootEditables = Array.from(document.querySelectorAll('#document-canvas [contenteditable="true"]'))
-                .filter(el => !el.closest('#units-container') && !el.closest('#assessment-tbody'));
+                .filter(el => !el.closest('#units-container') && !el.closest('#assessment-tbody') && !el.classList.contains('v2-field'));
             const staticData = rootEditables.map(el => el.innerHTML);
 
             // Grab checkbox toggles
@@ -676,7 +688,13 @@
                 return Array.from(row.querySelectorAll('[contenteditable="true"]')).map(el => el.innerHTML);
             });
 
-            return { staticData, checkboxes, units, assessments };
+            // Isolate new V2 fields so they don't break indexing logic for older saves
+            const v2Fields = {
+                genObjIntro: document.getElementById('general-objectives-intro').innerHTML,
+                genObjList: document.getElementById('general-objectives-list').innerHTML
+            };
+
+            return { staticData, checkboxes, units, assessments, v2Fields };
         }
 
         /* --- THE REHYDRATOR: Injects the tightly packed JSON back into the visual HTML --- */
@@ -713,7 +731,7 @@
 
             // Restore Static Editables
             const rootEditables = Array.from(document.querySelectorAll('#document-canvas [contenteditable="true"]'))
-                .filter(el => !el.closest('#units-container') && !el.closest('#assessment-tbody'));
+                .filter(el => !el.closest('#units-container') && !el.closest('#assessment-tbody') && !el.classList.contains('v2-field'));
             if(data.staticData) {
                 data.staticData.forEach((html, i) => {
                     if(rootEditables[i]) rootEditables[i].innerHTML = html;
@@ -726,6 +744,14 @@
                 data.checkboxes.forEach((isChecked, i) => {
                     if(checkboxes[i]) checkboxes[i].innerText = isChecked ? '☑' : '☐';
                 });
+            }
+
+            // Restore V2 Fields seamlessly (falls back to defaults gracefully if loading a V1 save file)
+            if(data.v2Fields) {
+                const introEl = document.getElementById('general-objectives-intro');
+                const listEl = document.getElementById('general-objectives-list');
+                if (introEl && data.v2Fields.genObjIntro) introEl.innerHTML = data.v2Fields.genObjIntro;
+                if (listEl && data.v2Fields.genObjList) listEl.innerHTML = data.v2Fields.genObjList;
             }
         }
 
@@ -755,7 +781,11 @@
                 s: currentData.staticData.map((val, i) => val === defaultData.staticData[i] ? null : val),
                 c: currentData.checkboxes.map((val, i) => val === defaultData.checkboxes[i] ? null : val),
                 u: currentData.units,
-                a: currentData.assessments
+                a: currentData.assessments,
+                v2: currentData.v2Fields ? {
+                    goi: currentData.v2Fields.genObjIntro === defaultData.v2Fields.genObjIntro ? null : currentData.v2Fields.genObjIntro,
+                    gol: currentData.v2Fields.genObjList === defaultData.v2Fields.genObjList ? null : currentData.v2Fields.genObjList
+                } : null
             };
         }
 
@@ -766,7 +796,11 @@
                 staticData: packedData.s.map((val, i) => val === null ? defaultData.staticData[i] : val),
                 checkboxes: packedData.c ? packedData.c.map((val, i) => val === null ? defaultData.checkboxes[i] : val) : defaultData.checkboxes,
                 units: packedData.u,
-                assessments: packedData.a
+                assessments: packedData.a,
+                v2Fields: packedData.v2 ? {
+                    genObjIntro: packedData.v2.goi === null ? defaultData.v2Fields.genObjIntro : packedData.v2.goi,
+                    genObjList: packedData.v2.gol === null ? defaultData.v2Fields.genObjList : packedData.v2.gol
+                } : defaultData.v2Fields
             };
         }
 
